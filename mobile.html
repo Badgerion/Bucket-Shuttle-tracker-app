@@ -1,0 +1,454 @@
+<!-- mobile.html -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Join Shuttle Trip</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <style>
+      /* ... (keep all existing styles) ... */
+       body { font-family: Arial, sans-serif; margin: 0; padding: 20px; max-width: 500px; margin: 0 auto; background-color: #f5f5f5; }
+       .container { border: 1px solid #ccc; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); background-color: #fff; margin-bottom: 20px; }
+       h3 { margin-top: 0; color: #333; }
+       .trip-code { font-size: 24px; font-weight: bold; color: #2c3e50; margin: 15px 0; text-align: center; }
+       /* Add styles for input grouping */
+       .input-group { margin-bottom: 15px; }
+       label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }
+       input { width: 100%; padding: 10px; /* margin: 10px 0; */ /* Adjusted margin if using input-group */ border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-size: 16px; }
+       button { background-color: #3498db; color: white; border: none; padding: 12px 20px; border-radius: 4px; cursor: pointer; width: 100%; font-size: 16px; margin-top: 10px; }
+       button:hover { background-color: #2980b9; }
+       button:disabled { background-color: #95a5a6; cursor: not-allowed; }
+       .status { padding: 15px; margin: 15px 0; border-radius: 4px; text-align: center; }
+       .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+       .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+       .loading { background-color: #e9ecef; color: #495057; border: 1px solid #ced4da; }
+       .location-data { font-size: 14px; color: #666; margin-top: 10px; }
+       .location-info { margin-bottom: 5px; }
+       .location-accuracy { font-style: italic; }
+       .periodic-update { font-size: 12px; color: #6c757d; text-align: center; margin-top: 20px; }
+       .header { text-align: center; margin-bottom: 20px; }
+       .header h1 { color: #3498db; margin-bottom: 5px; }
+       .header p { color: #7f8c8d; margin-top: 0; }
+       .map-preview { height: 150px; width: 100%; background-color: #e9ecef; border-radius: 4px; margin-top: 15px; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>Shuttle Tracker</h1>
+      <p>Join your shuttle trip and share your location</p>
+    </div>
+
+    <div class="container">
+      <h3>Join Trip</h3>
+      <!-- Renamed original div for clarity -->
+      <div id="join-details-area">
+          <!-- Added Name Input -->
+          <div class="input-group">
+              <label for="rider-name">Your Name/ID:</label>
+              <input type="text" id="rider-name" placeholder="Enter Your Name or ID">
+          </div>
+
+          <!-- Existing Trip Code Input -->
+          <div class="input-group">
+              <label for="trip-code">Trip Code:</label>
+              <p style="font-size: 0.9em; color: #666; margin-top: 0; margin-bottom: 5px;">Enter trip code manually or use code from URL.</p>
+              <input type="text" id="trip-code" placeholder="Enter Trip Code (e.g., ABC123)">
+          </div>
+
+          <button id="join-btn">Join Trip</button>
+      </div>
+
+      <div id="active-trip" style="display: none;">
+        <!-- Added Rider Name Display -->
+        <p>Welcome, <strong id="active-rider-name"></strong>!</p>
+        <p>You're currently part of trip:</p>
+        <div class="trip-code" id="active-code"></div>
+        <button id="leave-btn">Leave Trip</button>
+      </div>
+    </div>
+
+    <div class="container" id="status-container" style="display: none;">
+       <!-- Status and Location Info containers remain the same -->
+        <div id="status-message" class="status"></div>
+        <div id="location-info" style="display: none;">
+          <h3>Location Data</h3>
+          <div class="location-data">
+            <div class="location-info" id="latitude">Latitude: --</div>
+            <div class="location-info" id="longitude">Longitude: --</div>
+            <div class="location-accuracy" id="accuracy">Accuracy: -- meters</div>
+          </div>
+          <div id="map-preview" class="map-preview"></div>
+          <p class="periodic-update">Location updates are automatically sent every 15 seconds.</p>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+
+    <script>
+      // --- Variables ---
+      let currentTripCode = ''; // Changed name from tripCode
+      let currentRiderId = '';  // Added Rider ID variable
+      let watchId = null;
+      let updateInterval = null;
+      let map = null;
+      let locationMarker = null;
+      const UPDATE_FREQUENCY = 15000; // 15 seconds
+
+      // --- DOM elements ---
+      const riderNameInput = document.getElementById('rider-name'); // Added
+      const tripCodeInput = document.getElementById('trip-code');
+      const joinButton = document.getElementById('join-btn');
+      const leaveButton = document.getElementById('leave-btn');
+      const joinDetailsArea = document.getElementById('join-details-area'); // Changed name
+      const activeTripArea = document.getElementById('active-trip');
+      const activeCodeDisplay = document.getElementById('active-code');
+      const activeRiderNameDisplay = document.getElementById('active-rider-name'); // Added
+      const statusContainer = document.getElementById('status-container');
+      const statusMessage = document.getElementById('status-message');
+      const locationInfo = document.getElementById('location-info');
+      const latDisplay = document.getElementById('latitude');
+      const lngDisplay = document.getElementById('longitude');
+      const accDisplay = document.getElementById('accuracy');
+      const mapPreview = document.getElementById('map-preview');
+
+      // --- Map Functions (Keep existing initMap, updateMapPosition) ---
+      function initMap(lat, lng) {
+          if (map) {
+              // If map exists, just update view and marker
+              map.setView([lat, lng]);
+              if(locationMarker) {
+                  locationMarker.setLatLng([lat, lng]);
+              } else {
+                  locationMarker = L.marker([lat, lng]).addTo(map);
+              }
+          } else {
+              // Create map if it doesn't exist
+              map = L.map('map-preview').setView([lat, lng], 15);
+              L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                  attribution: '© OpenStreetMap contributors',
+                  maxZoom: 19
+              }).addTo(map);
+              locationMarker = L.marker([lat, lng]).addTo(map);
+          }
+
+          // Remove old accuracy circle if it exists
+          if (window.accuracyCircle) {
+              map.removeLayer(window.accuracyCircle);
+              window.accuracyCircle = null;
+          }
+      }
+
+       function updateMapPosition(position) {
+          if (map) { // Check if map is initialized
+                const newLatLng = [position.coords.latitude, position.coords.longitude];
+                if (locationMarker) {
+                    locationMarker.setLatLng(newLatLng);
+                } else {
+                    // Initialize marker if somehow lost (shouldn't happen often here)
+                    locationMarker = L.marker(newLatLng).addTo(map);
+                }
+                map.setView(newLatLng); // Keep map centered on user
+
+                // Update accuracy circle
+                const accuracy = position.coords.accuracy;
+                if (window.accuracyCircle) {
+                    map.removeLayer(window.accuracyCircle);
+                }
+                if (accuracy < 500) { // Only show accuracy circle if reasonable size
+                    window.accuracyCircle = L.circle(newLatLng, {
+                        radius: accuracy,
+                        color: '#3498db',
+                        fillColor: '#3498db',
+                        fillOpacity: 0.1
+                    }).addTo(map);
+                }
+          } else {
+                // If map isn't ready yet, initialize it
+                initMap(position.coords.latitude, position.coords.longitude);
+          }
+      }
+
+      // --- UI Helper Functions (Keep existing showStatus, clearStatus) ---
+       function showStatus(message, type) {
+          statusContainer.style.display = 'block';
+          statusMessage.textContent = message;
+          statusMessage.className = 'status ' + type;
+       }
+
+       function clearStatus() {
+          statusContainer.style.display = 'none';
+          statusMessage.textContent = '';
+          statusMessage.className = 'status';
+       }
+
+      // --- UI Update Functions ---
+      function showActiveTripUI() {
+        joinDetailsArea.style.display = 'none';
+        activeTripArea.style.display = 'block';
+        activeCodeDisplay.textContent = currentTripCode;
+        activeRiderNameDisplay.textContent = currentRiderId; // Display rider name
+        locationInfo.style.display = 'block'; // Show location info when active
+      }
+
+      function showJoinFormUI() {
+        joinDetailsArea.style.display = 'block';
+        activeTripArea.style.display = 'none';
+        locationInfo.style.display = 'none'; // Hide location info when not active
+        // Pre-fill rider name if stored
+        riderNameInput.value = localStorage.getItem('riderId') || '';
+        // Pre-fill trip code (optional, based on previous stored or URL)
+        // tripCodeInput.value = localStorage.getItem('tripCode') || '';
+      }
+
+      // --- Location Tracking Functions (Keep existing locationError, stopLocationTracking) ---
+        function locationError(error) {
+            let errorMessage = 'Unknown location error';
+            switch(error.code) {
+                case error.PERMISSION_DENIED: errorMessage = 'Location permission denied.'; break;
+                case error.POSITION_UNAVAILABLE: errorMessage = 'Location information unavailable.'; break;
+                case error.TIMEOUT: errorMessage = 'Location request timed out.'; break;
+            }
+            showStatus(errorMessage, 'error');
+            // If permission denied, we should probably stop trying
+            if (error.code === error.PERMISSION_DENIED) {
+                leaveTrip(); // Or at least stop tracking attempts
+            }
+        }
+
+        function stopLocationTracking() {
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            if (updateInterval !== null) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+            // Don't remove map, just hide location details
+            locationInfo.style.display = 'none';
+            console.log("Location tracking stopped.");
+        }
+
+       // Modified startLocationTracking to include rider ID in success message
+       function startLocationTracking() {
+            if (!navigator.geolocation) {
+                showStatus('Geolocation is not supported by your browser', 'error');
+                return false;
+            }
+            showStatus('Getting your location...', 'loading');
+
+            navigator.geolocation.getCurrentPosition(
+                position => {
+                    updateLocationDisplay(position); // Show initial location
+                    sendLocationToServer(position); // Send first update
+
+                    // Start watching for changes
+                    watchId = navigator.geolocation.watchPosition(
+                        updateLocationDisplay, // Only update display on watch
+                        locationError,
+                        { enableHighAccuracy: true }
+                    );
+
+                    // Start periodic updates to server
+                    updateInterval = setInterval(() => {
+                        navigator.geolocation.getCurrentPosition(
+                            sendLocationToServer, // Send position to server
+                            locationError,
+                            { enableHighAccuracy: true }
+                        );
+                    }, UPDATE_FREQUENCY);
+
+                    // Update status message to include Rider ID
+                    showStatus(`Successfully joined trip ${currentTripCode} as ${currentRiderId}`, 'success');
+                    locationInfo.style.display = 'block'; // Make sure location info is visible
+                    console.log("Location tracking started.");
+
+                },
+                (error) => { // Error callback for initial getCurrentPosition
+                    locationError(error);
+                    // If initial location fails, don't proceed to active state
+                    currentTripCode = ''; // Reset state
+                    currentRiderId = '';
+                    localStorage.removeItem('tripCode');
+                    localStorage.removeItem('riderId');
+                    showJoinFormUI(); // Go back to join form
+                },
+                { enableHighAccuracy: true, timeout: 10000 } // Add timeout
+            );
+            return true; // Indicate attempt started (success depends on callbacks)
+        }
+
+        // --- Update UI Display (Keep existing updateLocationDisplay) ---
+        function updateLocationDisplay(position) {
+            const lat = position.coords.latitude.toFixed(6);
+            const lng = position.coords.longitude.toFixed(6);
+            const accuracy = Math.round(position.coords.accuracy);
+
+            latDisplay.textContent = `Latitude: ${lat}`;
+            lngDisplay.textContent = `Longitude: ${lng}`;
+            accDisplay.textContent = `Accuracy: ${accuracy} meters`;
+
+            // Update map position (will also init map if needed)
+            updateMapPosition(position);
+        }
+
+      // --- Server Communication (Modified sendLocationToServer) ---
+      async function sendLocationToServer(position) {
+        // Check if we are actively in a trip
+        if (!currentTripCode || !currentRiderId) {
+            console.warn('Attempted to send location when not in an active trip.');
+            stopLocationTracking(); // Stop trying if state is inconsistent
+            return;
+        }
+
+        try {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          const acc = Math.round(position.coords.accuracy);
+
+          const response = await fetch('/api/logBooking', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              code: currentTripCode, // Use current code
+              riderId: currentRiderId, // ADDED: Send rider ID
+              lat: lat,
+              lng: lng,
+              acc: acc
+            })
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+             // Handle specific error for invalid trip code during updates
+             if (response.status === 400 && errorData.error && errorData.error.includes('Invalid trip code')) {
+                 showStatus(`Trip ${currentTripCode} may no longer be valid. Leaving trip.`, 'error');
+                 leaveTrip(); // Automatically leave if the trip becomes invalid server-side
+             } else {
+                throw new Error(errorData.error || `HTTP error ${response.status}`);
+             }
+          } else {
+              console.log('Location sent successfully:', new Date().toLocaleTimeString());
+              // Optional: Briefly show success status
+              // showStatus('Location update sent.', 'success');
+              // setTimeout(clearStatus, 1500);
+          }
+        } catch (error) {
+          console.error('Error sending location:', error);
+          // Avoid spamming user with errors on intermittent network issues
+          // showStatus('Failed to send location update.', 'error');
+          console.warn('Failed to send location update:', error.message);
+        }
+      }
+
+      // --- Trip Management Functions ---
+      function leaveTrip() {
+        stopLocationTracking();
+        currentTripCode = ''; // Clear current code
+        // Keep riderId in currentRiderId and localStorage
+        localStorage.removeItem('tripCode'); // Remove stored trip code
+        showJoinFormUI(); // Show join form again
+        clearStatus();
+        showStatus('You have left the trip.', 'success');
+        setTimeout(clearStatus, 3000);
+      }
+
+      // Modified joinTrip function (no longer takes argument)
+      function joinTrip() {
+          const riderNameValue = riderNameInput.value.trim();
+          const tripCodeValue = tripCodeInput.value.trim().toUpperCase();
+
+          // Validate inputs
+          if (!riderNameValue) {
+              showStatus('Please enter your Name or ID', 'error');
+              riderNameInput.focus();
+              return;
+          }
+          if (!tripCodeValue) {
+              showStatus('Please enter a Trip Code', 'error');
+              tripCodeInput.focus();
+              return;
+          }
+
+          // Store values globally and locally
+          currentRiderId = riderNameValue;
+          currentTripCode = tripCodeValue;
+          localStorage.setItem('riderId', currentRiderId);
+          localStorage.setItem('tripCode', currentTripCode);
+
+          // Attempt to start tracking and update UI
+          if (startLocationTracking()) {
+               showActiveTripUI(); // Update UI only if tracking attempt started okay
+          }
+          // Note: Actual success confirmed by location callback in startLocationTracking
+      }
+
+      // --- Utility Functions ---
+      function getCodeFromUrl() {
+        const urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get('code');
+      }
+
+      // --- Event listeners ---
+      joinButton.addEventListener('click', joinTrip); // Call new joinTrip
+
+      leaveButton.addEventListener('click', leaveTrip);
+
+      // Optional: Allow Enter key to trigger join
+      riderNameInput.addEventListener('keyup', (event) => {
+        if (event.key === 'Enter') {
+          tripCodeInput.focus(); // Move to next field
+        }
+      });
+      tripCodeInput.addEventListener('keyup', (event) => {
+        if (event.key === 'Enter') {
+          joinTrip(); // Attempt join
+        }
+      });
+
+      // --- Initialize on page load ---
+      document.addEventListener('DOMContentLoaded', () => {
+        console.log("DOM loaded. Initializing mobile page...");
+        const storedRiderId = localStorage.getItem('riderId');
+        const storedTripCode = localStorage.getItem('tripCode');
+        const urlCode = getCodeFromUrl();
+
+        // Always pre-fill rider name if stored
+        if (storedRiderId) {
+            console.log("Found stored rider ID:", storedRiderId);
+            riderNameInput.value = storedRiderId;
+            currentRiderId = storedRiderId; // Set global variable too
+        }
+
+        let codeToUse = null;
+        if (urlCode) {
+            console.log("Found trip code in URL:", urlCode);
+            codeToUse = urlCode.toUpperCase();
+            tripCodeInput.value = codeToUse; // Pre-fill input
+        } else if (storedTripCode) {
+             console.log("Found stored trip code:", storedTripCode);
+            codeToUse = storedTripCode;
+            tripCodeInput.value = codeToUse; // Pre-fill input
+        }
+
+        // Attempt to auto-join ONLY if we have both a Rider ID AND a Trip Code
+        if (currentRiderId && codeToUse) {
+            console.log(`Attempting auto-join with Rider: ${currentRiderId}, Code: ${codeToUse}`);
+            currentTripCode = codeToUse; // Set global variable
+            if(startLocationTracking()) {
+                 showActiveTripUI();
+            } else {
+                 // If tracking fails to start immediately (e.g., no geo support)
+                 showJoinFormUI();
+            }
+        } else {
+            // Otherwise, just show the join form (fields might be pre-filled)
+            console.log("Showing join form. Rider ID or Trip Code missing for auto-join.");
+            showJoinFormUI();
+        }
+      });
+    </script>
+  </body>
+</html>
